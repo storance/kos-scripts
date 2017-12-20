@@ -1,6 +1,5 @@
 
-RUN lib_ship.
-RUN lib_pid.
+RUNONCEPATH("lib/ship").
 
 function preFlightChecks {
     IF (SHIP:STATUS <> "SUB_ORBITAL" AND SHIP:STATUS <> "FLYING") {
@@ -42,11 +41,14 @@ function suicideBurn {
 }
 
 function landingApproach {
-    LOCAL velocity_pid TO PID_Init(0.1, 0.2, 0.005, 0, 1).
-    LOCAL pitch_pid TO PID_Init(2, 0.05, 0.05, -45, 45).
-    LOCAL yaw_pid TO PID_Init(2, 0.05, 0.05, -45, 45).
+    LOCAL velocity_pid TO PIDLOOP(0.1, 0.2, 0.005, 0, 1).
+    LOCAL pitch_pid TO PIDLOOP(2, 0.05, 0.05, -45, 45).
+    LOCAL yaw_pid TO PIDLOOP(2, 0.05, 0.05, -45, 45).
 
-    LOCAL targetDescentVelocity TO -3.
+    SET pitch_pid:SETPOINT TO 0.
+    SET yaw_pid:SETPOINT TO 0.
+
+    LOCAL targetDescentVelocity TO -50.
     LOCAL currentThrottle TO 0.
     LOCAL currentSteering TO LOOKDIRUP(-SHIP:VELOCITY:SURFACE, SHIP:UP:VECTOR).
 
@@ -81,15 +83,14 @@ function landingApproach {
             SET targetDescentVelocity TO -1.
             SET currentSteering TO SHIP:UP + R(0,0,0).
         } ELSE {
-            //LOCAL descentPrograde IS (retrograde:NORMALIZED + (UP + R(0,0,0)):VECTOR:NORMALIZED):NORMALIZED.
             LOCAL descentPrograde TO LOOKDIRUP(retrograde, SHIP:UP:VECTOR):VECTOR:NORMALIZED.
            
             // Still descending, keep trying to reduce horizontal movement.
             // Check if we're way off from up-right, if so, lock to vector mid-way between up and surface.
             IF (VANG(descentPrograde, (UP + R(0,0,0)):VECTOR) < 5) {
                 // Let PID keep track of alignment.
-                LOCAL pitchOffset IS -1 * PID_Seek(pitch_pid, 0, SHIP:VELOCITY:SURFACE * SHIP:FACING:TOPVECTOR).
-                LOCAL yawOffset IS PID_Seek(yaw_pid, 0, SHIP:VELOCITY:SURFACE * SHIP:FACING:STARVECTOR).               
+                LOCAL pitchOffset IS -1 * pitch_pid:UPDATE(TIME:SECONDS, SHIP:VELOCITY:SURFACE * SHIP:FACING:TOPVECTOR).
+                LOCAL yawOffset IS yaw_pid:UPDATE(TIME:SECONDS, SHIP:VELOCITY:SURFACE * SHIP:FACING:STARVECTOR).
                
                 SET currentSteering TO SHIP:UP + R(pitchOffset, yawOffset, 0).
             } ELSE {
@@ -98,7 +99,8 @@ function landingApproach {
             }
         }
        
-        SET currentThrottle TO PID_Seek(velocity_pid, targetDescentVelocity, SHIP:VERTICALSPEED).
+        SET velocity_pid:SETPOINT TO targetDescentVelocity.
+        SET currentThrottle TO velocity_pid:UPDATE(TIME:SECONDS, SHIP:VERTICALSPEED).
     }
 }
 
@@ -124,7 +126,6 @@ function getSuicideBurnAltitude {
     LOCAL va to ((SHIP:AVAILABLETHRUST / SHIP:MASS) - g).
 
     RETURN (vd^2) / (2*va).
-    //RETURN (VELOCITY:SURFACE:MAG ^ 2) / (2 * (SHIP:AVAILABLETHRUST / (SHIP:MASS * g))).
 }
 
 FUNCTION getTrueAltitude {
@@ -150,6 +151,7 @@ IF preFlightChecks() {
     landingApproach().
 
     SAS ON.
+    SET SHIP:CONTROL:MAINTHROTTLE TO 0.0.
     UNLOCK STEERING.
     UNLOCK THROTTLE.
 }

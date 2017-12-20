@@ -1,7 +1,7 @@
 DECLARE PARAMETER newPeKm.
 DECLARE PARAMETER newApKm.
 
-RUN lib_node.
+RUNONCEPATH("lib/node").
 
 SAS OFF.
 

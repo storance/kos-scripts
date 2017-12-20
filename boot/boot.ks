@@ -1,15 +1,39 @@
-IF SHIP:STATUS = "prelaunch" {
-    SWITCH TO ARCHIVE.
+function compileDirectory {
+    DECLARE PARAMETER path.
 
-    LIST FILES IN scripts.
-    LOCAL size IS 0.
-    FOR file IN scripts {
-        IF file:ISFILE AND file:EXTENSION = "ksm" {
-            SET size TO size + file:SIZE.
-            COPYPATH(file:name, "1:").
+    FOR file IN path:LIST:VALUES {
+        IF (NOT file:ISFILE) AND (file:NAME <> "boot") AND NOT (file:NAME:STARTSWITH(".")) {
+            LOCAL subDirPath TO PATH(path):COMBINE(file:NAME).
+            LOCAL destDir TO changeVolume(CORE:VOLUME, subDirPath).
+
+            IF NOT EXISTS(destDir) {
+                CREATEDIR(destDir).
+            }
+
+            compileDirectory(OPEN(subDirPath)).
+        }
+
+        IF file:ISFILE AND file:EXTENSION = "ks" {
+            LOCAL srcPath TO PATH(path):COMBINE(file:NAME).
+            LOCAL destPath TO changeVolume(CORE:VOLUME, path):COMBINE(file:NAME + "m").
+            COMPILE srcPath TO destPath.
         }
     }
-    PRINT "Total Size: " + size.
 }
 
-SWITCH TO CORE:VOLUME.
+function changeVolume {
+    DECLARE PARAMETER newVolume.
+    DECLARE PARAMETER path.
+
+    LOCAL newPath TO PATH(newVolume:ROOT).
+    FOR segment IN PATH(path):SEGMENTS {
+        SET newPath TO newPath:COMBINE(segment).
+    }
+
+    RETURN newPath.
+}
+
+IF SHIP:STATUS = "prelaunch" {
+    compileDirectory(ARCHIVE:ROOT).
+    SWITCH TO CORE:VOLUME.
+}

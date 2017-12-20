@@ -1,7 +1,7 @@
 @LAZYGLOBAL off.
 
-RUN ONCE lib_ship.
-RUN ONCE lib_warp.
+RUNONCEPATH("/lib/ship").
+RUNONCEPATH("/lib/warp").
 
 function createApoapsisManeuver {
     DECLARE PARAMETER pe.

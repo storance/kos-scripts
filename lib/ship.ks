@@ -70,15 +70,24 @@ function stageIfNeeded {
         }
     }
 
-    LOCAL hasClamps TO SHIP:MODULESNAMED("LaunchClamp"):LENGTH > 0 OR SHIP:MODULESNAMED("ExtendingLaunchClamp"):LENGTH > 0.
-
-    IF (hasClamps OR enginesIgnited = 0 OR enginesFlamedOut > 0) {
+    IF (enginesIgnited = 0 OR enginesFlamedOut > 0) {
         STAGE.
         WAIT UNTIL STAGE:READY.
         RETURN true.
     }
 
     RETURN false.
+}
+
+function stageLaunchClamps {
+    LOCAL hasClamps TO SHIP:MODULESNAMED("LaunchClamp"):LENGTH > 0 OR SHIP:MODULESNAMED("ExtendingLaunchClamp"):LENGTH > 0.
+
+    UNTIL NOT hasClamps {
+        STAGE.
+        WAIT UNTIL STAGE:READY.
+
+        SET hasClamps TO SHIP:MODULESNAMED("LaunchClamp"):LENGTH > 0 OR SHIP:MODULESNAMED("ExtendingLaunchClamp"):LENGTH > 0.
+    }
 }
 
 function orientTowardsNormal {

@@ -1,4 +1,4 @@
-RUN ONCE lib_node.
+RUNONCEPATH("lib/node").
 
 SAS OFF.
 CLEARSCREEN.
