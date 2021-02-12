@@ -60,7 +60,12 @@ function stageIfNeeded {
 
     LOCAL enginesIgnited TO 0.
     LOCAL enginesFlamedOut TO 0.
+    LOCAL animatingEngine TO false.
     FOR engine IN allEngines {
+        IF (engine:STAGE = STAGE:NUMBER AND (engine:HASMODULE("SSTUDeployableEngine") OR engine:HASMODULE("ModuleDeployableEngine"))) {
+            SET animatingEngine TO true.
+        }
+
         IF (engine:IGNITION) {
             SET enginesIgnited TO enginesIgnited + 1.
 
@@ -68,6 +73,11 @@ function stageIfNeeded {
                 SET enginesFlamedOut TO enginesFlamedOut + 1.
             }
         }
+    }
+
+    IF (enginesIgnited = 0 AND animatingEngine) {
+        WAIT 2.
+        RETURN false.
     }
 
     IF (enginesIgnited = 0 OR enginesFlamedOut > 0) {
@@ -80,13 +90,13 @@ function stageIfNeeded {
 }
 
 function stageLaunchClamps {
-    LOCAL hasClamps TO SHIP:MODULESNAMED("LaunchClamp"):LENGTH > 0 OR SHIP:MODULESNAMED("ExtendingLaunchClamp"):LENGTH > 0.
+    LOCAL launchClampsCount TO SHIP:MODULESNAMED("LaunchClamp"):LENGTH + SHIP:MODULESNAMED("ExtendingLaunchClamp"):LENGTH + SHIP:MODULESNAMED("ModuleRestockLaunchClamp"):LENGTH.
 
-    UNTIL NOT hasClamps {
+    UNTIL launchClampsCount = 0 {
         STAGE.
         WAIT UNTIL STAGE:READY.
 
-        SET hasClamps TO SHIP:MODULESNAMED("LaunchClamp"):LENGTH > 0 OR SHIP:MODULESNAMED("ExtendingLaunchClamp"):LENGTH > 0.
+        SET launchClampsCount TO SHIP:MODULESNAMED("LaunchClamp"):LENGTH + SHIP:MODULESNAMED("ExtendingLaunchClamp"):LENGTH + SHIP:MODULESNAMED("ModuleRestockLaunchClamp"):LENGTH.
     }
 }
 

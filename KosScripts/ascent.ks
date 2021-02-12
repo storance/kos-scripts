@@ -6,10 +6,13 @@ LOCAL inclination TO "".
 LOCAL azimuth TO "".
 LOCAL targetOrbitKm TO 0.
 LOCAL targetOrbit TO 0.
+LOCAL deployAltitude TO 0.
+LOCAL sasLevel TO 0.
 LOCAL decoupledFairings TO false.
 LOCAL deployedSolarPanels TO false.
 LOCAL deployedRadiators TO false.
 LOCAL deployedAntennas TO false.
+LOCAL jettisonedLES TO false.
 LOCAL hasDeployables TO false.
 
 function checkForDeployables {
@@ -17,8 +20,9 @@ function checkForDeployables {
     LOCAL solarPanels TO SHIP:PARTSTAGGED("solarPanel").
     LOCAL radiators TO SHIP:PARTSTAGGED("radiator").
     LOCAL antennas TO SHIP:PARTSTAGGED("antenna").
+    LOCAL les TO SHIP:PARTSTAGGED("les").
 
-    SET hasDeployables TO fairings:LENGTH + solarPanels:LENGTH + radiators:LENGTH + antennas:LENGTH > 0.
+    SET hasDeployables TO fairings:LENGTH + solarPanels:LENGTH + radiators:LENGTH + antennas:LENGTH + les:LENGTH > 0.
 }
 
 function preFlightChecks {
@@ -45,7 +49,7 @@ function preFlightChecks {
 function countdownToLaunch {
     FROM {LOCAL countdown is 5.} UNTIL countdown < 0 STEP {SET countdown to countdown - 1.} DO {
         HUDTEXT("T-" + countdown, 1, 2, 30, GREEN, FALSE).
-        WAIT 1. 
+        WAIT 1.
     }
 
     HUDTEXT("LIFT OFF", 10, 2, 30, GREEN, FALSE).
@@ -61,8 +65,11 @@ function ascendToApoapsis {
     LOCAL turnEnd TO targetOrbit * 0.5.
     LOCAL turnExponent TO 0.5.
     LOCAL turnStartVel TO 100.
-    LOCAL deployAltitude TO 0.
-    
+    LOCAL controllingTimeToAP TO FALSE.
+
+    LOCAL timeToApPid TO PIDLOOP(0.5, 0.006, 0.006, -10, 30).
+    SET timeToApPid:SETPOINT TO 60.
+
     IF (launchAzimuth = "") {
         SET azData TO LAZcalc_init(targetOrbitKm, inclination).
         SET launchAzimuth TO LAZcalc(azData).
@@ -75,11 +82,11 @@ function ascendToApoapsis {
 
     IF SHIP:BODY:ATM:EXISTS {
         LOCAL engineInfo TO activeEngineInfo().
-        SET turnExponent TO MAX(1 / (2.5 * engineInfo["maxTwr"] - 1.7), 0.25).
-        //SET turnEnd TO 0.128 * SHIP:BODY:ATM:HEIGHT * engineInfo["maxTwr"] + 0.5 * SHIP:BODY:ATM:HEIGHT.
-        SET turnEnd TO 0.128 * targetOrbit * engineInfo["maxTwr"] + 0.5 * SHIP:BODY:ATM:HEIGHT.
-        SET deployAltitude TO SHIP:BODY:ATM:HEIGHT * 0.8.
-        SET turnStartVel TO 100 - (engineInfo["maxTwr"] - 1.5) * 125.
+        LOCAL effectiveTWR TO engineInfo["maxTwr"].
+
+        SET turnExponent TO MAX(1 / (2.5 * effectiveTWR - 1.7), 0.25).
+        SET turnEnd TO (0.128 * SHIP:BODY:ATM:HEIGHT * effectiveTWR) + (0.4 * SHIP:BODY:ATM:HEIGHT) + ((targetOrbit - SHIP:BODY:ATM:HEIGHT) * effectiveTWR * 0.192).
+        SET turnStartVel TO 100 - (effectiveTWR - 1.5) * 125.
     }
 
     PRINT "Turn Start Vel: " + turnStartVel + "m/s".
@@ -97,39 +104,49 @@ function ascendToApoapsis {
         }
 
         LOCAL newPitch TO 0.
-        IF (SHIP:BODY:ATM:EXISTS) {
-            IF (SHIP:OBT:VELOCITY:SURFACE:MAG >= turnStartVel) {
-                IF (turnStart = 0) {
-                    SET turnStart TO SHIP:ALTITUDE.
+        IF (NOT controllingTimeToAP) {
+            IF (SHIP:BODY:ATM:EXISTS) {
+                IF (SHIP:OBT:VELOCITY:SURFACE:MAG >= turnStartVel) {
+                    IF (turnStart = 0) {
+                        SET turnStart TO SHIP:ALTITUDE.
+                    }
+
+                    SET newPitch TO MIN(90, ((SHIP:ALTITUDE - turnStart) / (turnEnd - turnStart)) ^ turnExponent * 90.0).
+                } ELSE {
+                    SET newPitch TO 0.
                 }
-
-                SET newPitch TO MIN(90, ((SHIP:ALTITUDE - turnStart) / (turnEnd - turnStart)) ^ turnExponent * 90.0).
             } ELSE {
-                SET newPitch TO 0.
-            }
-        } ELSE {
-            // ptich 45 degress until we have enough clearance with the ground, than go horizontal
-            IF (SHIP:ALTITUDE < 5000 OR SHIP:ALTITUDE < startAlt + 1000) {
-                SET newPitch TO 45.
-            } ELSE {
-                SET newPitch TO 90.
+                // ptich 45 degress until we have enough clearance with the ground, than go horizontal
+                IF (SHIP:ALTITUDE < 5000 OR SHIP:ALTITUDE < startAlt + 1000) {
+                    SET newPitch TO 45.
+                } ELSE {
+                    SET newPitch TO 90.
+                }
             }
         }
 
-        IF (newPitch - pitch > 0.2) {
-            SET pitch TO newPitch.
+        IF (controllingTimeToAP OR (pitch >= 80 AND ETA:APOAPSIS < 60))  {
+            IF (NOT controllingTimeToAP AND SHIP:ALTITUDE < turnEnd ) {
+                PRINT "Aborting pitch program and entering control time to apoapsis mode.".
+            }
+            SET controllingTimeToAP TO TRUE.
+            LOCAL pitchUpdate TO timeToApPid:UPDATE(TIME:SECONDS, ETA:APOAPSIS).
+            SET newPitch TO 90 - pitchUpdate.
         }
+
+        SET pitch TO newPitch.
 
         IF (hasDeployables AND SHIP:ALTITUDE >= deployAltitude) {
             decoupleFairings().
+            jettisonLaunchEscapeSystem().
             deploySolarPanels().
             deployRadiators().
             deployAntennas().
         }
-        
+
         stageIfNeeded().
 
-        IF (SHIP:APOAPSIS > targetOrbit * 0.95) {
+        IF (SHIP:APOAPSIS > (targetOrbit - 5000)) {
             LOCK THROTTLE TO 0.25.
         }
 
@@ -139,19 +156,26 @@ function ascendToApoapsis {
             SET buffer TO 400 * LN(SHIP:BODY:ATM:HEIGHT / SHIP:ALTITUDE).
         }
 
-        WAIT 0.1.
+        WAIT 0.01.
     }
 }
 
 function circularizeOrbit {
     LOCK THROTTLE TO 0.
     LOCK STEERING TO SHIP:PROGRADE.
+    WAIT 1.0.
 
     stageIfNeeded().
     LOCAL nd TO createApoapsisManeuver(targetOrbit).
     LOCAL burnTime TO calculateBurnTime(nd:deltav:mag).
 
-    WAIT 0.1.
+    IF sasLevel > 0 {
+        SAS ON.
+        WAIT 0.1.
+        SET SASMODE TO "PROGRADE".
+    } ELSE {
+        WAIT 0.1.
+    }
     warpFor(nd:ETA - (burnTime/2) - 60).
     updateApoapsisManeuver(nd, targetOrbit).
     SAS OFF.
@@ -192,8 +216,8 @@ function decoupleFairing {
         FOR child in fairing:CHILDREN {
             IF (child:MODULES:CONTAINS("ProceduralFairingDecoupler")) {
                 LOCAL module TO child:GETMODULE("ProceduralFairingDecoupler").
-                IF module:HASEVENT("jettison") {
-                    module:DOEVENT("jettison").
+                IF module:HASEVENT("jettison fairing") {
+                    module:DOEVENT("jettison fairing").
                 }
             }
         }
@@ -204,6 +228,45 @@ function decoupleFairing {
             module:DOEVENT("deploy").
         }
     }
+}
+
+function jettisonLaunchEscapeSystem {
+    IF (jettisonedLES) {
+        RETURN.
+    }
+
+    LOCAL launchEscapeSystems TO SHIP:PARTSTAGGED("les").
+    IF (launchEscapeSystems:LENGTH > 0) {
+        PRINT "Jettisoning Launch Escape System".
+
+        FOR les IN launchEscapeSystems {
+            LOCAL decoupleModule TO "".
+            LOCAL engineModule TO "".
+
+            IF (les:MODULES:CONTAINS("ModuleDecouple")) {
+                SET decoupleModule TO les:GETMODULE("ModuleDecouple").
+            }
+
+            IF (les:MODULES:CONTAINS("ModuleEnginesFX")) {
+                SET engineModule TO les:GETMODULE("ModuleEnginesFX").
+            } ELSE IF (les:MODULES:CONTAINS("ModuleEngines")) {
+                SET engineModule TO les:GETMODULE("ModuleEngines").
+            }
+
+            If (engineModule <> "" AND decoupleModule <> "") {
+                if (engineModule:HASEVENT("activate engine") AND decoupleModule:HASEVENT("decouple")) {
+                    engineModule:DOEVENT("activate engine").
+                    decoupleModule:DOEVENT("decouple").
+                } ELSE {
+                    PRINT "ERROR: Could not find event 'decouple' and/or 'activate engine'".
+                }
+            } ELSE {
+                PRINT "ERROR: Could not fine 'ModuleDecouple' and/or a 'ModuleEngines'".
+            }
+        }
+    }
+
+    SET jettisonedLES TO true.
 }
 
 function deploySolarPanels {
@@ -221,6 +284,8 @@ function deploySolarPanels {
                 LOCAL module TO solarPanel:GETMODULE("ModuleDeployableSolarPanel").
                 IF (module:HASEVENT("extend solar panel")) {
                     module:DOEVENT("extend solar panel").
+                } ELSE IF (module:HASEVENT("extend panel")) {
+                    module:DOEVENT("extend panel").
                 } ELSE {
                     PRINT "ERROR: Could not find 'extend solar panel' event.".
                 }
@@ -228,11 +293,20 @@ function deploySolarPanels {
                 LOCAL module TO solarPanel:GETMODULE("KopernicusSolarPanel").
                 IF (module:HASEVENT("extend solar panel")) {
                     module:DOEVENT("extend solar panel").
+                } ELSE IF (module:HASEVENT("extend panel")) {
+                    module:DOEVENT("extend panel").
                 } ELSE {
                     PRINT "ERROR: Could not find 'extend solar panel' event.".
                 }
+            } ELSE IF (solarPanel:MODULES:CONTAINS("SSTUSolarPanelDeployable")) {
+                LOCAL module TO solarPanel:GETMODULE("SSTUSolarPanelDeployable").
+                IF (module:HASEVENT("extend solar panels")) {
+                    module:DOEVENT("extend solar panels").
+                } ELSE {
+                    PRINT "ERROR: Could not find 'extend solar panels' event.".
+                }
             } ELSE {
-                PRINT "ERROR: Could not find ModuleDeployableSolarPanel or KopernicusSolarPanel module.".
+                PRINT "ERROR: Could not find ModuleDeployableSolarPanel, KopernicusSolarPanel, or SSTUSolarPanelDeployable module.".
             }
         }
     }
@@ -275,15 +349,27 @@ function deployAntennas {
     LOCAL antennas TO SHIP:PARTSTAGGED("antenna").
     IF (antennas:LENGTH > 0) {
         PRINT "DEPLOYING " + antennas:LENGTH + " ANTENNA(S)".
-        
+
         FOR antenna IN antennas {
             IF (antenna:MODULES:CONTAINS("ModuleDeployableAntenna")) {
                 LOCAL module TO antenna:GETMODULE("ModuleDeployableAntenna").
                 IF (module:HASEVENT("extend antenna")) {
                     module:DOEVENT("extend antenna").
+                } ELSE IF (module:HASEVENT("extend panel")) {
+                    module:DOEVENT("extend panel").
+                } ELSE IF (module:HASEVENT("extend")) {
+                    module:DOEVENT("extend").
                 } ELSE {
-                    PRINT "ERROR: Could not find 'extend antenna' event.".
+                    PRINT "ERROR: Could not find 'extend antenna' or 'extend panel' event.".
                 }
+            } ELSE IF (antenna:MODULES:CONTAINS("ModuleAnimateGeneric")) {
+                LOCAL module TO antenna:GETMODULE("ModuleAnimateGeneric").
+                IF (module:HASEVENT("extend")) {
+                    module:DOEVENT("extend").
+                } ELSE {
+                    PRINT "ERROR: Could not find 'extend' event.".
+                }
+
             } ELSE {
                 PRINT "ERROR: Could not find ModuleDeployableAntenna module.".
             }
@@ -321,7 +407,8 @@ FUNCTION getArguments {
 
     LOCAL initial_orbit_km TO 25.
     IF (SHIP:BODY:ATM:EXISTS) {
-        SET initial_orbit_km TO FLOOR((SHIP:BODY:ATM:HEIGHT * 1.4) / 1000).
+        // Calculate and orbit that is 1.4 higher than the atmosphere height rounded up to nearest 10 km.
+        SET initial_orbit_km TO CEILING((SHIP:BODY:ATM:HEIGHT * 1.4) / 10000) * 10.
     }
 
     LOCAL target_orbit_box IS main_box:ADDHLAYOUT().
@@ -329,6 +416,24 @@ FUNCTION getArguments {
     LOCAL target_orbit_field IS target_orbit_box:ADDTEXTFIELD("" + initial_orbit_km).
     SET target_orbit_field:STYLE:WIDTH TO 90.
     SET target_orbit_field:STYLE:HEIGHT TO 18.
+
+    LOCAL initial_deploy_altitude TO 0.
+    IF (SHIP:BODY:ATM:EXISTS) {
+       SET initial_deploy_altitude TO FLOOR(SHIP:BODY:ATM:HEIGHT / 1000).
+    }
+
+    LOCAL deploy_altitude_box IS main_box:ADDHLAYOUT().
+    deploy_altitude_box:ADDLABEL("Deploy Altitude (km): ").
+    LOCAL deploy_altitude_field IS deploy_altitude_box:ADDTEXTFIELD("" + initial_deploy_altitude).
+    SET deploy_altitude_field:STYLE:WIDTH TO 90.
+    SET deploy_altitude_field:STYLE:HEIGHT TO 18.
+
+
+    LOCAL sas_level_box IS main_box:ADDHLAYOUT().
+    sas_level_box:ADDLABEL("SAS Level: ").
+    LOCAL sas_level_field IS sas_level_box:ADDTEXTFIELD("0").
+    SET sas_level_field:STYLE:WIDTH TO 90.
+    SET sas_level_field:STYLE:HEIGHT TO 18.
 
     LOCAL ok_btn IS main_box:ADDBUTTON("Ok").
     SET ok_btn:STYLE:WIDTH TO 60.
@@ -361,10 +466,12 @@ FUNCTION getArguments {
 
     SET targetOrbitKm TO target_orbit_field:TEXT:TONUMBER.
     SET targetOrbit TO targetOrbitKm * 1000.
-    IF (mode_radio_box:RADIOVALUE = "Azimuth") {       
+    SET deployAltitude TO deploy_altitude_field:TEXT:TONUMBER * 1000.
+    SET sasLevel TO sas_level_field:TEXT:TONUMBER.
+    IF (mode_radio_box:RADIOVALUE = "Azimuth") {
         SET azimuth TO az_field:TEXT:TONUMBER.
     } ELSE {
-        SET inclination TO inc_field:TEXT:TONUMBER. 
+        SET inclination TO inc_field:TEXT:TONUMBER.
     }
 }
 
@@ -373,14 +480,14 @@ checkForDeployables().
 IF preFlightChecks() {
     SAS OFF.
     RCS ON.
-    
+
     SET SHIP:CONTROL:MAINTHROTTLE TO 0.0.
     LOCK THROTTLE TO 0.0.
     countdownToLaunch().
 
     ascendToApoapsis().
     circularizeOrbit().
-    orientTowardsNormal().
+    //orientTowardsNormal().
 
     SAS ON.
     SET SHIP:CONTROL:MAINTHROTTLE TO 0.0.

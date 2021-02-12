@@ -1,13 +1,45 @@
 RUNONCEPATH("lib/util").
 
+FUNCTION etaToOrbitPlane {
+    PARAMETER is_AN, planet, obt_lan, obt_inc, ship_lat, ship_lng.
+
+    LOCAL rel_lng IS ARCSIN(TAN(ship_lat) / TAN(obt_inc)).
+    IF NOT is_AN {
+        SET rel_lng TO 180 - rel_lng.
+    }
+
+    LOCAL g_lan IS clampAngle(obt_lan + rel_lng - planet:ROTATIONANGLE).
+    LOCAL node_angle IS clampAngle(g_lan - ship_lng).
+    LOCAL eta IS (node_angle / 360) * planet:ROTATIONPERIOD.
+
+    RETURN eta.
+}
+
 FUNCTION main {
     LOCAL args IS get_arguments().
-    LOCAL rel_lng IS ARCSIN(TAN(SHIP:LATITUDE) / TAN(args["inc"])).
-    LOCAL univeral_ship_lng IS SHIP:LONGITUDE + SHIP:BODY:ROTATIONANGLE + rel_lng.
-    LOCAL an_node_angle IS clampAngle(args["lan"] - univeral_ship_lng).
-    LOCAL dn_node_angle IS clampAngle(an_node_angle + 180).
-    LOCAL an_eta IS (an_node_angle / 360) * SHIP:BODY:ROTATIONPERIOD.
-    LOCAL dn_eta IS (dn_node_angle / 360) * SHIP:BODY:ROTATIONPERIOD.
+
+    LOCAL inc_lat_diff IS args["inc"] - SHIP:LATITUDE.
+    IF inc_lat_diff < 0 AND inc_lat_diff > -0.1 {
+        IF ABS(SHIP:LATITUDE)
+
+        SET args["inc"] TO SHIP:LATITUDE.
+    } ELSE IF inc_lat_diff < -0.1 {
+        PRINT "Target inclination is impossible to reach from this latitude.".
+        RETURN.
+    }
+
+    PRINT "Target Inclination: " + args["inc"].
+    PRINT "Target LAN: " + args["lan"].
+    
+    //LOCAL rel_lng IS ARCSIN(TAN(SHIP:LATITUDE) / TAN(args["inc"])).
+    //LOCAL univeral_ship_lng IS SHIP:LONGITUDE + SHIP:BODY:ROTATIONANGLE + rel_lng.
+    //LOCAL an_node_angle IS clampAngle(args["lan"] - univeral_ship_lng).
+    //LOCAL dn_node_angle IS clampAngle(an_node_angle + 180).
+    //LOCAL an_eta IS (an_node_angle / 360) * SHIP:BODY:ROTATIONPERIOD.
+    //LOCAL dn_eta IS (dn_node_angle / 360) * SHIP:BODY:ROTATIONPERIOD.
+
+    LOCAL an_eta IS etaToOrbitPlane(TRUE, BODY, args["lan"], args["inc"], SHIP:LATITUDE, SHIP:LONGITUDE).
+    LOCAL dn_eta IS etaToOrbitPlane(FALSE, BODY, args["lan"], args["inc"], SHIP:LATITUDE, SHIP:LONGITUDE).
 
     IF (dn_eta < an_eta) {
         LOCAL alarm IS addAlarm("DescendingNode", TIME:SECONDS + dn_eta, "Launch Window: " + args["target_name"] + "Descending Node", "").

@@ -127,5 +127,5 @@ function pointAtNode {
 
     LOCAL np TO LOOKDIRUP(nd:deltav, SHIP:FACING:TOPVECTOR).
     LOCK STEERING TO np.
-    WAIT UNTIL (abs(np:pitch - SHIP:FACING:PITCH) < 0.15 AND abs(np:yaw - SHIP:FACING:YAW) < 0.15) OR nd:ETA <= 1.
+    WAIT UNTIL (abs(np:pitch - SHIP:FACING:PITCH) < 0.05 AND abs(np:yaw - SHIP:FACING:YAW) < 0.05) OR nd:ETA <= 1.
 }
